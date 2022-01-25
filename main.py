@@ -2,6 +2,7 @@ import json
 import numpy as np
 import argparse
 from binance import Client, ThreadedWebsocketManager, ThreadedDepthCacheManager
+import time
 
 
 def get_api_key(file_path):
@@ -31,6 +32,7 @@ class MartingaleBot():
         self.buy_after_up_rate = buy_after_up_rate
         self.start_sell_rate = start_sell_rate
         self.sell_after_down_rate = sell_after_down_rate
+        self.record_round = 0
 
         # start
         self.start_new_round()
@@ -92,6 +94,7 @@ class MartingaleBot():
 
         self.total_usdt_val = get_usdt - trade_fee + sum(self.sep_usdt)
         print("### sell ###")
+        self.record_round += 1
         self.start_new_round()
         self.track_selling = False
 
@@ -132,8 +135,9 @@ class MartingaleBot():
 
     def print_status(self):
         print(self.total_coin_amount)
-        print(self.coin_avg_usdt)
-
+def time_stamp_to_string(time_stamp):
+    struct_time = time.localtime(time_stamp) # 轉成時間元組
+    return time.strftime("%Y-%m-%d %H:%M:%S", struct_time) # 轉成字串
 
 def main():
 
@@ -152,24 +156,28 @@ def main():
     # fetch 1 minute klines for the last day up until now
     klines = client.get_historical_klines("XLMUSDT",
                                           Client.KLINE_INTERVAL_1MINUTE,
-                                          "1 day ago UTC")
+                                          "4 day ago UTC")
 
-    init_val = 75.7 + 2.5706
+    init_val = 75.7
+    start_time_string = "2022-01-22 09:22:41"
+    struct_time = time.strptime(start_time_string, "%Y-%m-%d %H:%M:%S")
+    start_time_stamp = int(time.mktime(struct_time)*1000)
+
+    end_time_string = "2022-01-23 09:22:41"
+    struct_time = time.strptime(end_time_string, "%Y-%m-%d %H:%M:%S")
+    end_time_stamp = int(time.mktime(struct_time)*1000)
+
     m_bot = MartingaleBot(init_val)
-    a = 0.195338
-    b = 0.189
-    c = 0.197
-    d = 0.195
-    price_list = np.linspace(a,b,20, False).tolist() + np.linspace(b, c, 20, False).tolist() + np.linspace(c, d, 20, False).tolist()
-    for p in price_list:
-        m_bot.parse_current_status(p)
 
-    exit()
-    # print(b/a)
 
     for i, k in enumerate(klines):
         # print(k)
         open_time, op, hi, lo, cl, vol, close_time, _, _, _, _, _ = k
+        if(open_time < start_time_stamp):
+            continue
+        if(open_time > end_time_stamp):
+            break
+
         op = float(op)
         hi = float(hi)
         lo = float(lo)
@@ -184,7 +192,7 @@ def main():
         for price in price_order:
             m_bot.parse_current_status(price)
             # m_bot.print_status()
-        break
+    print(m_bot.record_round)
 
     exit()
 
