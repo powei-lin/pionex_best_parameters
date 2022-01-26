@@ -77,44 +77,15 @@ def test_bot(param_and_klines):
     return (y_vals[-1], y_vals[::len(y_vals) // max_count], m_label)
 
 
-def main():
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-k",
-                        "--key_json",
-                        help="api key json file path",
-                        dest='file_path',
-                        required=True)
-    args = parser.parse_args()
-    file_path = args.file_path
-    api_key, api_secret = get_api_key(file_path)
-
-    client = Client(api_key, api_secret)
-
-    # fetch 1 minute klines for the last day up until now
-    test_days = 14
+def run_coin_test(coin_id, test_days, client):
     plot_title = str(test_days) + " day ago UTC"
-    # coin_id = "FTT"
-    # coin_id = "XLM"
-    # coin_id = "DOT"
-    # coin_id = "SOL"
-    coin_id = "CRV"
-    # coin_id = "UNI"
     klines = client.get_historical_klines(coin_id + "USDT",
                                           Client.KLINE_INTERVAL_1MINUTE,
                                           plot_title)
-    print("Get klines")
 
-    init_val = 75.7
     start_time_string = "2022-01-22 09:23:41"
     struct_time = time.strptime(start_time_string, "%Y-%m-%d %H:%M:%S")
     start_time_stamp = int(time.mktime(struct_time) * 1000)
-
-    # end_time_string = "2022-01-23 09:22:41"
-    # struct_time = time.strptime(end_time_string, "%Y-%m-%d %H:%M:%S")
-    # end_time_stamp = int(time.mktime(struct_time)*1000)
-    # print(len(params))
-    # exit()
 
     x = []
     params = create_params()
@@ -123,7 +94,7 @@ def main():
     params_and_klines = [(param, klines) for param in params]
     results = process_map(test_bot,
                           params_and_klines,
-                          max_workers=8,
+                          max_workers=16,
                           chunksize=4)
 
     for result in results:
@@ -141,7 +112,9 @@ def main():
         best_y = y[-1]
     print("best:", best_y)
 
-    ax.set(xlabel='time (s)', ylabel='profit rate', title=plot_title)
+    ax.set(xlabel='time (s)',
+           ylabel='profit rate',
+           title=coin_id + " from " + plot_title)
     ax.hlines([best_y],
               0,
               1,
@@ -150,10 +123,33 @@ def main():
               label="best profit rate: {0:.4f}%".format(best_y))
     ax.grid()
     ax.legend()
-    if(not os.path.exists("results")):
+    if (not os.path.exists("results")):
         os.makedirs("results")
-    plt.savefig("results/{0}_USDT_{1:03d}_days.png".format(coin_id, test_days))
-    # plt.show()
+    plt.savefig("results/Days{0:03d}_{1}_USDT_days.png".format(
+        test_days, coin_id))
+    plt.close()
+
+
+def main():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-k",
+                        "--key_json",
+                        help="api key json file path",
+                        dest='file_path',
+                        required=True)
+    args = parser.parse_args()
+    file_path = args.file_path
+    api_key, api_secret = get_api_key(file_path)
+
+    client = Client(api_key, api_secret)
+
+    # fetch 1 minute klines for the last day up until now
+    test_day_set = [7, 14]
+    coin_ids = ["FTT", "XLM", "DOT", "SOL", "CRV", "UNI", "BTC", "ETH"]
+    for test_days in test_day_set:
+        for coin_id in coin_ids[1:]:
+            run_coin_test(coin_id, test_days, client)
     exit()
 
 
