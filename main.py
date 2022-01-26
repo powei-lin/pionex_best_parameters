@@ -3,6 +3,7 @@ import numpy as np
 import argparse
 import heapq
 from tqdm import tqdm
+import os
 from tqdm.contrib.concurrent import process_map  # or thread_map
 
 from binance import Client
@@ -22,9 +23,10 @@ def time_stamp_to_string(time_stamp):
     struct_time = time.localtime(time_stamp)  # 轉成時間元組
     return time.strftime("%Y-%m-%d %H:%M:%S", struct_time)  # 轉成字串
 
+
 def create_params():
     params = []
-    for mbt in [7, 8, 9]:
+    for mbt in [7, 8, 9, 10]:
         for nbr in [1.6, 1.7, 1.8]:
             for b0 in [1.6, 1.7, 1.8]:
                 for b1 in [0.4, 0.5, 0.6]:
@@ -32,6 +34,48 @@ def create_params():
                         for s1 in [0.1, 0.2, 0.3]:
                             params.append((mbt, nbr, b0, b1, s0, s1))
     return params
+
+
+def test_bot(param_and_klines):
+    (mbt, nbr, b0, b1, s0, s1), klines = param_and_klines
+    m_bot = MartingaleBotTrailing(100.0,
+                                  max_buy_time=mbt,
+                                  next_buy_rate=nbr,
+                                  start_buy_after_down_rate=b0,
+                                  buy_after_up_rate=b1,
+                                  start_sell_rate=s0,
+                                  sell_after_down_rate=s1)
+    m_label = "b0: {}, b1: {}, s0: {}, s1: {}, n: {}, mbt: {}".format(
+        m_bot.start_buy_after_down_rate, m_bot.buy_after_up_rate,
+        m_bot.start_sell_rate, m_bot.sell_after_down_rate, m_bot.next_buy_rate,
+        m_bot.max_buy_time)
+    y_vals = []
+    for i, k in enumerate(klines):
+        open_time, op, hi, lo, cl, vol, close_time, _, _, _, _, _ = k
+
+        op = float(op)
+        hi = float(hi)
+        lo = float(lo)
+        cl = float(cl)
+
+        price_order = []
+        if (op < cl):
+            price_order = [op, lo, hi, cl]
+        else:
+            price_order = [op, hi, lo, cl]
+
+        # price_order = [op, cl]
+        # print(time_stamp_to_string(open_time/1000), op, cl)
+        for price in price_order:
+            r = m_bot.parse_current_status(price)
+            y_vals.append(r)
+    if (min(y_vals) < -5):
+        return (-100, None, None)
+
+    max_count = 500
+
+    return (y_vals[-1], y_vals[::len(y_vals) // max_count], m_label)
+
 
 def main():
 
@@ -48,8 +92,15 @@ def main():
     client = Client(api_key, api_secret)
 
     # fetch 1 minute klines for the last day up until now
-    plot_title = "90 day ago UTC"
-    klines = client.get_historical_klines("XLMUSDT",
+    test_days = 14
+    plot_title = str(test_days) + " day ago UTC"
+    # coin_id = "FTT"
+    # coin_id = "XLM"
+    # coin_id = "DOT"
+    # coin_id = "SOL"
+    coin_id = "CRV"
+    # coin_id = "UNI"
+    klines = client.get_historical_klines(coin_id + "USDT",
                                           Client.KLINE_INTERVAL_1MINUTE,
                                           plot_title)
     print("Get klines")
@@ -69,65 +120,40 @@ def main():
     params = create_params()
     top_10 = []
 
+    params_and_klines = [(param, klines) for param in params]
+    results = process_map(test_bot,
+                          params_and_klines,
+                          max_workers=8,
+                          chunksize=4)
 
-    for mbt, nbr, b0, b1, s0, s1 in tqdm(params):
-        m_bot = MartingaleBotTrailing(init_val,
-                                max_buy_time=mbt,
-                                next_buy_rate=nbr,
-                                start_buy_after_down_rate=b0,
-                                buy_after_up_rate=b1,
-                                start_sell_rate=s0,
-                                sell_after_down_rate=s1)
-        m_label = "b0: {},b1: {}, s0: {}, s1: {}, n: {}, mbt: {}".format(
-            m_bot.start_buy_after_down_rate, m_bot.buy_after_up_rate,
-            m_bot.start_sell_rate, m_bot.sell_after_down_rate, m_bot.next_buy_rate, m_bot.max_buy_time)
-        y_vals = []
-        for i, k in enumerate(klines):
-            # print(k)
-            open_time, op, hi, lo, cl, vol, close_time, _, _, _, _, _ = k
-            # if(open_time < start_time_stamp):
-            #     continue
-
-            op = float(op)
-            hi = float(hi)
-            lo = float(lo)
-            cl = float(cl)
-
-            price_order = []
-            if (op < cl):
-                price_order = [op, lo, hi, cl]
-            else:
-                price_order = [op, hi, lo, cl]
-
-            # price_order = [op, cl]
-            # print(time_stamp_to_string(open_time/1000), op, cl)
-            for price in price_order:
-                r = m_bot.parse_current_status(price)
-                y_vals.append(r)
-        if(min(y_vals) < -5):
-            continue
-        elif(len(top_10) >= 10):
-            heapq.heappushpop(top_10, (y_vals[-1], y_vals, m_label))
+    for result in results:
+        if (len(top_10) >= 15):
+            heapq.heappushpop(top_10, result)
         else:
-            heapq.heappush(top_10, (y_vals[-1], y_vals, m_label))
-    # m_bot.print_status()
-    # x = []
-    # y = []
-    # for i, p in enumerate(m_bot.record_sell):
-    #     x.append(i)
-    #     y.append(p[1])
+            heapq.heappush(top_10, result)
 
-    fig, ax = plt.subplots()
-    x = [i for i in range(len(top_10[0][1]))]
-    while(top_10):
+    fig, ax = plt.subplots(figsize=(12, 8))
+    x = [test_days * i / len(top_10[0][1]) for i in range(len(top_10[0][1]))]
+    best_y = 0.0
+    while (top_10):
         _, y, l = heapq.heappop(top_10)
         ax.plot(x, y, label=l)
+        best_y = y[-1]
+    print("best:", best_y)
 
     ax.set(xlabel='time (s)', ylabel='profit rate', title=plot_title)
+    ax.hlines([best_y],
+              0,
+              1,
+              transform=ax.get_yaxis_transform(),
+              colors='r',
+              label="best profit rate: {0:.4f}%".format(best_y))
     ax.grid()
     ax.legend()
-
-    plt.show()
+    if(not os.path.exists("results")):
+        os.makedirs("results")
+    plt.savefig("results/{0}_USDT_{1:03d}_days.png".format(coin_id, test_days))
+    # plt.show()
     exit()
 
 
