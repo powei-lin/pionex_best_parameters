@@ -1,8 +1,15 @@
 import json
 import numpy as np
 import argparse
-from binance import Client, ThreadedWebsocketManager, ThreadedDepthCacheManager
+import heapq
+from tqdm import tqdm
+from tqdm.contrib.concurrent import process_map  # or thread_map
+
+from binance import Client
 import time
+import matplotlib.pyplot as plt
+
+from TradingBot import MartingaleBotTrailing
 
 
 def get_api_key(file_path):
@@ -11,133 +18,20 @@ def get_api_key(file_path):
         return k['api_key'], k['secret_key']
 
 
-class MartingaleBot():
-
-    trade_fee_rate = 0.0005
-
-    def __init__(self,
-                 init_usdt,
-                 max_buy_time=8,
-                 next_buy_rate=1.8,
-                 start_buy_after_down_rate=1.5,
-                 buy_after_up_rate=0.4,
-                 start_sell_rate=0.8,
-                 sell_after_down_rate=0.2) -> None:
-
-        self.init_usdt = init_usdt
-        self.total_usdt_val = init_usdt
-        self.max_buy_time = max_buy_time
-        self.next_buy_rate = next_buy_rate
-        self.start_buy_after_down_rate = start_buy_after_down_rate
-        self.buy_after_up_rate = buy_after_up_rate
-        self.start_sell_rate = start_sell_rate
-        self.sell_after_down_rate = sell_after_down_rate
-        self.record_round = 0
-
-        # start
-        self.start_new_round()
-
-    def start_new_round(self):
-
-        print("current usdt:", self.total_usdt_val)
-        # calulate first step
-        t = 1
-        for i in range(self.max_buy_time):
-            t += self.next_buy_rate**i
-        step = self.total_usdt_val / t
-
-        # seperate usdt into incremental steps
-        self.sep_usdt = [step]
-        for i in range(self.max_buy_time):
-            self.sep_usdt.append(step * (self.next_buy_rate**i))
-
-        # print(self.sep_usdt)
-        # print(sum(self.sep_usdt))
-
-        # set init coin
-        self.total_coin_amount = 0.0
-        self.coin_avg_usdt = 0
-        self.start_track_buy_price = None
-        self.current_lowest_price = None
-        self.start_track_sell_price = None
-        self.current_highest_price = None
-        self.track_buying = False
-        self.track_selling = False
-        self.first_trade = True
-
-    def buy_coin(self, coin_price, usdt):
-        trade_fee = usdt * MartingaleBot.trade_fee_rate
-        buy_amount = (usdt - trade_fee) / coin_price
-
-        self.coin_avg_usdt = (self.total_coin_amount * self.coin_avg_usdt +
-                              buy_amount * coin_price) / (
-                                  self.total_coin_amount + buy_amount)
-        self.total_coin_amount += buy_amount
-
-        self.start_track_buy_price = coin_price * (
-            1.0 - self.start_buy_after_down_rate / 100.0)
-
-        self.start_track_sell_price = self.coin_avg_usdt * (
-            1.0 + self.start_sell_rate / 100.0) / (
-                1.0 - MartingaleBot.trade_fee_rate)
-
-        print("buy amount:", buy_amount)
-        print("buy price:", coin_price)
-        print("start_track_buy_price:", self.start_track_buy_price)
-        print("start_track_sell_price:", self.start_track_sell_price)
-
-        self.track_buying = False
-
-    def sell_coin(self, coin_price):
-        get_usdt = self.total_coin_amount * coin_price
-        trade_fee = get_usdt * MartingaleBot.trade_fee_rate
-
-        self.total_usdt_val = get_usdt - trade_fee + sum(self.sep_usdt)
-        print("### sell ###")
-        self.record_round += 1
-        self.start_new_round()
-        self.track_selling = False
-
-    def change_status(self, price):
-        if(self.sep_usdt and price <= self.start_track_buy_price):
-            print("---start track buying---")
-            self.track_buying = True
-            self.current_lowest_price = price
-        elif(price >= self.start_track_sell_price):
-            print("---start track selling---")
-            self.track_selling = True
-            self.current_highest_price = price
-
-    def parse_current_status(self, price):
-
-        if (self.first_trade):
-            usdt = self.sep_usdt.pop(0)
-            self.buy_coin(price, usdt)
-            self.current_lowest_price = price
-            self.current_highest_price = price
-            self.first_trade = False
-        elif (self.track_buying):
-            buy_threshold = self.current_lowest_price*(1.0+self.buy_after_up_rate/100.0)
-            # print(buy_threshold)
-            if(price >= buy_threshold):
-                usdt = self.sep_usdt.pop(0)
-                self.buy_coin(buy_threshold, usdt)
-            else:
-                self.current_lowest_price = min(price, self.current_lowest_price)
-        elif (self.track_selling):
-            sell_threshold = self.current_highest_price*(1.0-self.sell_after_down_rate/100.0)
-            if(price <= sell_threshold):
-                self.sell_coin(sell_threshold)
-            else:
-                self.current_highest_price = max(price, self.current_highest_price)
-        else:
-            self.change_status(price)
-
-    def print_status(self):
-        print(self.total_coin_amount)
 def time_stamp_to_string(time_stamp):
-    struct_time = time.localtime(time_stamp) # 轉成時間元組
-    return time.strftime("%Y-%m-%d %H:%M:%S", struct_time) # 轉成字串
+    struct_time = time.localtime(time_stamp)  # 轉成時間元組
+    return time.strftime("%Y-%m-%d %H:%M:%S", struct_time)  # 轉成字串
+
+def create_params():
+    params = []
+    for mbt in [7, 8, 9]:
+        for nbr in [1.6, 1.7, 1.8]:
+            for b0 in [1.6, 1.7, 1.8]:
+                for b1 in [0.4, 0.5, 0.6]:
+                    for s0 in [0.7, 0.8, 0.9, 1.0]:
+                        for s1 in [0.1, 0.2, 0.3]:
+                            params.append((mbt, nbr, b0, b1, s0, s1))
+    return params
 
 def main():
 
@@ -154,46 +48,86 @@ def main():
     client = Client(api_key, api_secret)
 
     # fetch 1 minute klines for the last day up until now
+    plot_title = "90 day ago UTC"
     klines = client.get_historical_klines("XLMUSDT",
                                           Client.KLINE_INTERVAL_1MINUTE,
-                                          "4 day ago UTC")
+                                          plot_title)
+    print("Get klines")
 
     init_val = 75.7
-    start_time_string = "2022-01-22 09:22:41"
+    start_time_string = "2022-01-22 09:23:41"
     struct_time = time.strptime(start_time_string, "%Y-%m-%d %H:%M:%S")
-    start_time_stamp = int(time.mktime(struct_time)*1000)
+    start_time_stamp = int(time.mktime(struct_time) * 1000)
 
-    end_time_string = "2022-01-23 09:22:41"
-    struct_time = time.strptime(end_time_string, "%Y-%m-%d %H:%M:%S")
-    end_time_stamp = int(time.mktime(struct_time)*1000)
+    # end_time_string = "2022-01-23 09:22:41"
+    # struct_time = time.strptime(end_time_string, "%Y-%m-%d %H:%M:%S")
+    # end_time_stamp = int(time.mktime(struct_time)*1000)
+    # print(len(params))
+    # exit()
 
-    m_bot = MartingaleBot(init_val)
+    x = []
+    params = create_params()
+    top_10 = []
 
 
-    for i, k in enumerate(klines):
-        # print(k)
-        open_time, op, hi, lo, cl, vol, close_time, _, _, _, _, _ = k
-        if(open_time < start_time_stamp):
+    for mbt, nbr, b0, b1, s0, s1 in tqdm(params):
+        m_bot = MartingaleBotTrailing(init_val,
+                                max_buy_time=mbt,
+                                next_buy_rate=nbr,
+                                start_buy_after_down_rate=b0,
+                                buy_after_up_rate=b1,
+                                start_sell_rate=s0,
+                                sell_after_down_rate=s1)
+        m_label = "b0: {},b1: {}, s0: {}, s1: {}, n: {}, mbt: {}".format(
+            m_bot.start_buy_after_down_rate, m_bot.buy_after_up_rate,
+            m_bot.start_sell_rate, m_bot.sell_after_down_rate, m_bot.next_buy_rate, m_bot.max_buy_time)
+        y_vals = []
+        for i, k in enumerate(klines):
+            # print(k)
+            open_time, op, hi, lo, cl, vol, close_time, _, _, _, _, _ = k
+            # if(open_time < start_time_stamp):
+            #     continue
+
+            op = float(op)
+            hi = float(hi)
+            lo = float(lo)
+            cl = float(cl)
+
+            price_order = []
+            if (op < cl):
+                price_order = [op, lo, hi, cl]
+            else:
+                price_order = [op, hi, lo, cl]
+
+            # price_order = [op, cl]
+            # print(time_stamp_to_string(open_time/1000), op, cl)
+            for price in price_order:
+                r = m_bot.parse_current_status(price)
+                y_vals.append(r)
+        if(min(y_vals) < -5):
             continue
-        if(open_time > end_time_stamp):
-            break
-
-        op = float(op)
-        hi = float(hi)
-        lo = float(lo)
-        cl = float(cl)
-
-        price_order = []
-        if (op < cl):
-            price_order = [op, lo, hi, cl]
+        elif(len(top_10) >= 10):
+            heapq.heappushpop(top_10, (y_vals[-1], y_vals, m_label))
         else:
-            price_order = [op, hi, lo, cl]
+            heapq.heappush(top_10, (y_vals[-1], y_vals, m_label))
+    # m_bot.print_status()
+    # x = []
+    # y = []
+    # for i, p in enumerate(m_bot.record_sell):
+    #     x.append(i)
+    #     y.append(p[1])
 
-        for price in price_order:
-            m_bot.parse_current_status(price)
-            # m_bot.print_status()
-    print(m_bot.record_round)
+    fig, ax = plt.subplots()
+    x = [i for i in range(len(top_10[0][1]))]
+    while(top_10):
+        _, y, l = heapq.heappop(top_10)
+        ax.plot(x, y, label=l)
 
+    ax.set(xlabel='time (s)', ylabel='profit rate', title=plot_title)
+    ax.grid()
+    ax.legend()
+
+    plt.show()
     exit()
 
 
