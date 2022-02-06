@@ -26,11 +26,11 @@ def time_stamp_to_string(time_stamp):
 
 def create_params():
     params = []
-    for mbt in [7, 8, 9, 10]:
-        for nbr in [1.6, 1.7, 1.8]:
-            for b0 in [1.6, 1.7, 1.8]:
+    for mbt in [7, 8, 9]:
+        for nbr in [1.5, 1.6, 1.7, 1.8]:
+            for b0 in [1.5, 1.6, 1.7, 1.8]:
                 for b1 in [0.4, 0.5, 0.6]:
-                    for s0 in [0.7, 0.8, 0.9, 1.0]:
+                    for s0 in [1.1, 1.2, 1.3, 1.4]:
                         for s1 in [0.1, 0.2, 0.3]:
                             params.append((mbt, nbr, b0, b1, s0, s1))
     return params
@@ -69,7 +69,7 @@ def test_bot(param_and_klines):
         for price in price_order:
             r = m_bot.parse_current_status(price)
             y_vals.append(r)
-    if (min(y_vals) < -5):
+    if (min(y_vals) < -10):
         return (-100, None, None)
 
     max_count = 500
@@ -145,10 +145,12 @@ def main():
     client = Client(api_key, api_secret)
 
     # fetch 1 minute klines for the last day up until now
-    test_day_set = [7, 14]
-    coin_ids = ["FTT", "XLM", "DOT", "SOL", "CRV", "UNI", "BTC", "ETH"]
+    test_day_set = [60]
+    # coin_ids = ["MATIC", "FTT", "XLM", "DOT", "SOL", "CRV", "UNI", "BTC", "ETH"]
+    coin_ids = ["SHIB"]
     for test_days in test_day_set:
-        for coin_id in coin_ids[1:]:
+        for coin_id in coin_ids:
+            print(coin_id)
             run_coin_test(coin_id, test_days, client)
     exit()
 
